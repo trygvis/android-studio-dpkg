@@ -1,0 +1,261 @@
+#!/bin/bash
+
+set -e
+#set -x
+
+force=false
+umask=022
+
+uname_s=$(uname -s)
+
+usage() {
+  echo "usage: $0 OPTIONS" >&2
+  echo "Use $0 -? for usage help" >&2
+  exit 1
+}
+
+detect_platform() {
+  if [[ -r /etc/debian_version ]]
+  then
+    echo "debian"
+    return
+  fi
+
+  echo "Could not detect platform, use -p to specify." >&2
+}
+
+find_latest() {
+  if [ "$DOWNLOAD_URL" = "" ]
+  then
+    DOWNLOAD_URL="https://developer.android.com/sdk/index.html"
+  fi
+
+  echo "Finding latest version from $DOWNLOAD_URL ..."
+
+  read url v filename b skip_the_rest < <(wget --max-redirect 5 -O - -q $DOWNLOAD_URL | \
+    LC_ALL=C sed -n -e 's,.*"\(http.*/\([.0-9]*\)/\(android-studio-ide-\(.*\)-linux.zip\)\)".*,\1 \2 \3 \4,p' | xargs)
+
+  version=$v/$b
+
+  if [[ -z $url || -z $filename || -z $v || -z $b ]]
+  then
+    echo "Unable to find the latest version." >&2
+    exit 1
+  fi
+}
+
+build_common() {
+  rm -rf root
+  if [ ! -z "$src_dir" ]
+  then
+    echo "Copying Android Studio from $src_dir"
+    mkdir -p root/usr/share/jetbrains
+    cp -r "$src_dir" root/usr/share/jetbrains/android-studio
+  else
+    echo "Unpacking file"
+    mkdir -p root/usr/share/jetbrains
+    unzip -q download/$filename -d root/usr/share/jetbrains
+  fi
+  mkdir -p root/usr/bin
+
+  cp android-studio.in root/usr/bin/android-studio
+  chmod +rx root/usr/bin/android-studio
+
+  mkdir -p root/usr/share/applications
+  cp android-studio.desktop root/usr/share/applications/
+
+  mkdir -p root/etc/android-studio
+  cp studio.vmoptions.README root/etc/android-studio/
+  echo "
+Original studio.vmoptions:
+" >> root/etc/android-studio/studio.vmoptions.README
+  cat root/usr/share/jetbrains/android-studio/bin/studio.vmoptions >> root/etc/android-studio/studio.vmoptions.README
+}
+
+calculate_package_filename() {
+  case "$platform" in
+    solaris)
+      repo=`pwd`/repository/solaris/`uname -p`/`uname -r`
+      mkdir -p $repo
+      package_filename=$repo/android-studio-$v-$b-`uname -s``uname -r`-`uname -p`.pkg
+      ;;
+    debian)
+      # TODO: Add arch to the filename (i386, amd64)
+      repo=repository/debian
+      mkdir -p $repo
+      package_filename=$repo/android-studio-$v-$b.deb
+      ;;
+  esac
+}
+
+build_solaris() {
+  build_common 
+
+  rm -rf solaris
+  mkdir -p solaris
+
+  sed -e "s,@VERSION@,$v-$b," pkginfo.in > solaris/pkginfo
+  cp prototype.in solaris/prototype
+  pkgproto root=/ | awk '
+   {$5="root"}
+   $3 ~ /^\/$/ {getline} 
+   $3 ~ /^\/usr$/ {getline}
+   $3 ~ /^\/usr\/bin$/ {getline}
+   $3 ~ /^\/usr\/share$/ {getline}
+   $3 ~ /^\/usr\/share\/applications$/ {getline}
+   {printf $1 " " $2 " " $3 " " $4 " " $5 " " $6 " \n"}' >> solaris/prototype
+  pkgmk -o -d solaris -f solaris/prototype -r .
+
+  pkgtrans -s solaris $package_filename android-studio
+  echo "The package was successfully build in solaris/"
+  echo "To install run: pfexec pkgadd -d $package_filename"
+
+  if [ "$update_repository" = 1 ]
+  then
+    bldcat -b $repo
+  fi
+}
+
+build_debian() {
+  build_common
+
+  mkdir -p root/etc/sysctl.d
+  cp debian/sysctl-99-android-studio.conf root/etc/sysctl.d
+  chmod +rx root/usr/bin/android-studio
+
+  mkdir -p root/DEBIAN
+
+  sed \
+    -e "s,VERSION,$v," \
+    -e "s,BUILD,$b," \
+    debian/control.in > root/DEBIAN/control
+
+  cp debian/postinst root/DEBIAN/postinst
+  chmod +rx root/DEBIAN/postinst
+
+  echo > debian/fakeroot.save
+  FAKEROOT="fakeroot -i debian/fakeroot.save -s debian/fakeroot.save"
+  $FAKEROOT -- chown -R root:root root/
+  $FAKEROOT -- dpkg-deb -b root $package_filename
+  rm debian/fakeroot.save
+
+  if [ "$update_repository" = 1 ]
+  then
+    (cd $repo && dpkg-scanpackages -m . /dev/null | tee Packages | gzip > Packages.gz )
+  fi
+}
+
+while getopts "f:Fp:s:v:u?" flag
+do
+  case "$flag" in
+    s)
+      src_dir=$OPTARG
+      ;;
+    p) 
+      platform=$OPTARG
+
+      if [ "$platform" != "solaris" -a "$platform" != "debian" ]
+      then
+        usage
+      fi
+      ;;
+    v)
+      version=$OPTARG
+      ;;
+    u)
+      update_repository=1
+      ;;
+    F)
+      force="true"
+      ;;
+    ?)
+      less README.md
+      exit 0
+      ;;
+  esac
+done
+
+if [ -z "$platform" ]
+then
+  platform=$(detect_platform)
+fi
+
+if [ -z "$src_dir" ]
+then
+  if [ -z "$version" ]
+  then
+    find_latest
+    echo "The latest version is $v/$b"
+  else
+    v=${version%/*}
+    b=${version#*/}
+
+    if [[ -z $v || -z $b ]]
+    then
+      echo "Version has to be on the form <version/build>, e.g.: 1.0.1/135.1641136" >&2
+      exit 1
+    fi
+
+    url=https://dl.google.com/dl/android/studio/ide-zips/$v/android-studio-ide-$b-linux.zip
+    filename=${url##*/}
+  fi
+else
+  if [ -z "$version" ]
+  then
+    echo "When building from a directory, a version has to be specified with -v." >&2
+    exit 1
+  fi
+
+  if [ ! -d "$src_dir" ]
+  then
+    echo "Not a directory: $src_dir" >&2
+    exit 1
+  fi
+fi
+
+calculate_package_filename
+
+if [ -r "$package_filename" ]
+then
+  if [ $force = "false" ]
+  then
+    echo "The requested version ($version) already exist in the repository, add -F to force a re-build of the package" >&2
+    exit 1
+  else
+    echo "WARNING: re-building package for version $version" >&2
+  fi
+fi
+
+if [ -z "$src_dir" -a ! -r download/$filename ]
+then
+  mkdir -p download
+
+  # It would be possible to use the MD5 sum as a check here, then there would be no need to every force a download
+  #if [ -r "download/$filename" ]
+  #then
+  #  echo "$filename is already downloaded"
+  #else
+  #  echo "Downloading $url..."
+  #  wget -O "download/$filename" $url
+  #fi
+
+  echo "Downloading version $version..."
+  if [ `wget -q -P download -N $url; echo $?` != "0" ]
+  then
+    echo "Could not download $url" >&2
+    exit 1
+  fi
+
+  if [ ! -r download/$filename ]
+  then
+    echo "wget didn't place the downloaded file where expected: download/$filename" >&2
+    exit 1
+  fi
+fi
+
+case "$platform" in
+  solaris)
+    build_solaris;;
+  debian)
+    build_debian;;
+esac

@@ -1,0 +1,8 @@
+*.save
+*~
+*.swp
+root
+download/*.zip
+intellij-idea/Packages*
+repository
+solaris

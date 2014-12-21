@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Android Studio
+#Comment=
+Exec=/usr/bin/android-studio
+Terminal=false
+Type=Application
+StartupNotify=true
+Icon=/usr/share/jetbrains/android-studio/bin/androidstudio.svg
+Categories=Development;IDE;Debugger;Profiling

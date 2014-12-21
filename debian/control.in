@@ -1,0 +1,9 @@
+Package: android-studio
+Section: devel
+Version: VERSION-BUILD
+Maintainer: Trygve Laugstøl <trygvis@inamo.no>
+Architecture: all
+Depends: oracle-java8-installer | openjdk-7-jdk | sun-java6-jdk | openjdk-6-jdk
+Suggests: openjdk-8-source, openjdk-7-source, openjdk-6-source
+Description: Android Studio
+
