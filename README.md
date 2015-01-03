@@ -1,7 +1,7 @@
 SYNOPSIS
 --------
 
-    ./build-package [-v <version>/<build> ] -u
+    ./build-package [-v <version>/<build> ] -u [-c <channel>]
 
 DESCRIPTION
 --------
@@ -40,8 +40,18 @@ OPTIONS
 * `-v <version>`
 
     The version of the build to use. If not specified the script will
-    automatically find and download the latest EAP build of IDEA 14 from
-    http://confluence.jetbrains.net/display/IDEADEV/IDEA+14+EAP
+    automatically find and download the latest Canary build from
+    https://dl.google.com/android/studio/patches/updates.xml
+
+* `-c <channel>`
+
+    The update channel that should be used. Current values:
+
+    Channel          | Description
+    AI-1-eap         | Canary
+    AI-1-dev-channel | Development
+    AI-1-beta        | Beta
+    AI-1-release     | Full releases
 
 EXAMPLES
 -------

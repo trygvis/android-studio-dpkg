@@ -27,15 +27,24 @@ detect_platform() {
 find_latest() {
   if [ "$DOWNLOAD_URL" = "" ]
   then
-    DOWNLOAD_URL="https://developer.android.com/sdk/index.html"
+    DOWNLOAD_URL="https://dl.google.com/android/studio/patches/updates.xml"
+  fi
+
+  if [[ ! -x $(which xmlstarlet 2>/dev/null) ]]
+  then
+    echo "You need to install xmlstarlet: sudo apt-get install xmlstarlet" >&2
+    exit 1
   fi
 
   echo "Finding latest version from $DOWNLOAD_URL ..."
 
-  read url v filename b skip_the_rest < <(wget --max-redirect 5 -O - -q $DOWNLOAD_URL | \
-    LC_ALL=C sed -n -e 's,.*"\(http.*/\([.0-9]*\)/\(android-studio-ide-\(.*\)-linux.zip\)\)".*,\1 \2 \3 \4,p' | xargs)
+  version=$(wget --max-redirect 5 -O - -q $DOWNLOAD_URL |
+    xmlstarlet sel -t -m "//channel[@id=\"$channel\"]" -v 'build/@number' -o '/' -v 'build/@version')
+  b=${version%/*}
+  v=${version#*/}
 
-  version=$v/$b
+  url=https://dl.google.com/dl/android/studio/ide-zips/$v/android-studio-ide-$b-linux.zip
+  filename=android-studio-ide-$b-linux.zip
 
   if [[ -z $url || -z $filename || -z $v || -z $b ]]
   then
@@ -145,7 +154,7 @@ build_debian() {
   fi
 }
 
-while getopts "f:Fp:s:v:u?" flag
+while getopts "c:f:Fp:s:v:u?" flag
 do
   case "$flag" in
     s)
@@ -154,7 +163,7 @@ do
     p) 
       platform=$OPTARG
 
-      if [ "$platform" != "solaris" -a "$platform" != "debian" ]
+      if [ "$platform" != "debian" ]
       then
         usage
       fi
@@ -168,6 +177,9 @@ do
     F)
       force="true"
       ;;
+    c)
+      channel=$OPTARG
+      ;;
     ?)
       less README.md
       exit 0
@@ -178,6 +190,28 @@ done
 if [ -z "$platform" ]
 then
   platform=$(detect_platform)
+fi
+
+settings="$HOME/.android-studio-dpkg"
+if [[ -z $channel ]]
+then
+  if [[ -r $settings ]]
+  then
+    channel=$(sed -n "s,^channel=\(.*\),\1,p" "$settings")
+  else
+    echo "Defaulting to the 'AI-1-eap' channel (aka Canary), use -c to override."
+    channel=AI-1-eap
+  fi
+
+  if [[ -z $channel ]]
+  then
+    usage
+  fi
+else
+  echo "Saving the channel so you don't have to specify it again."
+  grep -v '^channel=' "$settings" > "$settings.tmp"
+  echo 'channel=$channel' >> "$settings.tmp"
+  mv "$settings.tmp" "$settings"
 fi
 
 if [ -z "$src_dir" ]
